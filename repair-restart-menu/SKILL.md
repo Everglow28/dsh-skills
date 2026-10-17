@@ -12,7 +12,7 @@ DeepSeek Harness 更新会用新的 `app.asar` 覆盖补丁,使左上角"应用"
 1. 运行准备模式(重新定位偏移、生成补丁副本、启动分离的等待进程):
 
    ```
-   & "C:\Users\duanye\AppData\Local\Programs\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe" "C:\Users\duanye\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" prepare
+   & "C:\Users\<你的用户名>\AppData\Local\Programs\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" prepare
    ```
 
    注意:如果本会话的命令执行沙箱报 `Windows Job runner` 错误或写入 app.asar 副本无效,改用变通通道:临时安装一个 apply 里 `spawnSync` 执行上述命令的 bundle(新目录路径安装,Host 进程不受沙箱限制);或者把上面这条命令交给用户在普通终端里手动运行。
@@ -22,15 +22,15 @@ DeepSeek Harness 更新会用新的 `app.asar` 覆盖补丁,使左上角"应用"
 3. 验证:
 
    ```
-   & "…\node.exe" "C:\Users\duanye\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" status
+   & "…\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" status
    ```
 
-   `live @offset …: true/*dev*/` 即生效;`last-swap.txt` 里有 swap 记录。
+   `live state: patched @offset …: true/*dev*/` 即生效（`original` 为未打补丁）;`last-swap.txt` 里有 swap 记录。
 
 ## 回滚
 
 ```
-& "…\node.exe" "C:\Users\duanye\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" revert
+& "…\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" revert
 ```
 
 (用 `app.asar.old` 恢复;若无 .old 则需重装应用。)

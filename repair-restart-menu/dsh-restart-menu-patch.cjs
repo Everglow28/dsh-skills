@@ -18,12 +18,13 @@ const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
 
-const RESOURCE_DIR = "C:/Users/duanye/AppData/Local/Programs/DeepSeek Harness/resources";
+const RESOURCE_DIR = "C:/Users/n7789/AppData/Local/Programs/DeepSeek Harness/resources";
 const LIVE = RESOURCE_DIR + "/app.asar";
 const WORK = __dirname;
 const PATCHED = path.join(WORK, "app.asar.patched");
 const MARKER = path.join(WORK, "last-swap.txt");
 const NEEDLE = Buffer.from("...development ? [", "utf8");
+const PATCHED_NEEDLE = Buffer.from("...true/*dev*/ ? [", "utf8");
 const ORIG = Buffer.from("development", "utf8");
 const PATCH = Buffer.from("true/*dev*/", "utf8");
 const SLEEP = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -44,19 +45,23 @@ function mainInfo(asarPath) {
   return info;
 }
 
-/** 在 main.js 内搜索模式,返回 "development" 的绝对字节偏移。 */
-function locate(asarPath) {
+/** 在 main.js 内搜索原始/已补丁两种模式,返回指向变化字节的绝对偏移与当前状态。 */
+function locateState(asarPath) {
   const { dataOffset, size } = mainInfo(asarPath);
   const fd = fs.openSync(asarPath, "r");
   const buf = Buffer.alloc(size);
   fs.readSync(fd, buf, 0, size, BigInt(dataOffset));
   fs.closeSync(fd);
-  const idx = buf.indexOf(NEEDLE);
-  if (idx < 0) {
-    const head = buf.slice(0, 60).toString("utf8").replace(/[^\x20-\x7e]/g, ".");
-    throw new Error(`pattern not found (dataOffset=${dataOffset}, size=${size}, head=${head})`);
-  }
-  return dataOffset + idx + 3; // 跳过 "..." 前缀,指向 development
+  let idx = buf.indexOf(NEEDLE);
+  if (idx >= 0) return { offset: dataOffset + idx + 3, state: "original" }; // 指向 development
+  idx = buf.indexOf(PATCHED_NEEDLE);
+  if (idx >= 0) return { offset: dataOffset + idx + 3, state: "patched" }; // 指向 true/*dev*/
+  const head = buf.slice(0, 60).toString("utf8").replace(/[^\x20-\x7e]/g, ".");
+  throw new Error(`pattern not found (dataOffset=${dataOffset}, size=${size}, head=${head})`);
+}
+
+function locate(asarPath) {
+  return locateState(asarPath).offset;
 }
 
 function readBytesAt(file, offset) {
@@ -88,16 +93,29 @@ function prepare() {
 
 function wait() {
   const deadline = Date.now() + 12 * 60 * 60 * 1000;
+  let swapped = false;
   while (Date.now() < deadline) {
+    const old = LIVE + ".old";
     try {
-      const old = LIVE + ".old";
+      if (!swapped) {
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+        fs.renameSync(LIVE, old);
+        fs.copyFileSync(PATCHED, LIVE);
+        swapped = true;
+      }
+      // 用双模式定位验证:已补丁状态不再误判为失败
+      const st = locateState(LIVE);
+      const verify = readBytesAt(LIVE, st.offset).toString("utf8");
+      fs.appendFileSync(MARKER, `swap ${new Date().toISOString()}: done, state=${st.state}, verify=${verify}\n`);
+      // 验证通过后才清理回滚文件,避免验证失败误删唯一备份
       if (fs.existsSync(old)) fs.unlinkSync(old);
-      fs.renameSync(LIVE, old);
-      fs.copyFileSync(PATCHED, LIVE);
-      const verify = readBytesAt(LIVE, locate(LIVE)).toString("utf8");
-      fs.appendFileSync(MARKER, `swap ${new Date().toISOString()}: done, verify=${verify}, rollback at app.asar.old\n`);
       return;
-    } catch {
+    } catch (e) {
+      if (swapped) {
+        // 换入后验证/记录失败:保留 .old 供 revert,写明原因后退出
+        fs.appendFileSync(MARKER, `swap ${new Date().toISOString()}: post-swap error: ${e && e.message}\n`);
+        return;
+      }
       SLEEP(1000); // 应用仍在运行,等待解锁
     }
   }
@@ -108,8 +126,8 @@ function status() {
   const lines = [];
   lines.push("live exists: " + fs.existsSync(LIVE));
   if (fs.existsSync(LIVE)) {
-    const offset = locate(LIVE);
-    lines.push("live @offset " + offset + ": " + readBytesAt(LIVE, offset).toString("utf8"));
+    const st = locateState(LIVE);
+    lines.push("live state: " + st.state + " @offset " + st.offset + ": " + readBytesAt(LIVE, st.offset).toString("utf8"));
   }
   lines.push("patched copy exists: " + fs.existsSync(PATCHED));
   lines.push("rollback .old exists: " + fs.existsSync(LIVE + ".old"));
