@@ -9,20 +9,29 @@ DeepSeek Harness 更新会用新的 `app.asar` 覆盖补丁,使左上角"应用"
 
 ## 步骤
 
-1. 运行准备模式(重新定位偏移、生成补丁副本、启动分离的等待进程):
+运行命令需要两样东西,脚本会自动探测,无需硬编码:
+
+- **脚本路径**:本 skill 的资源目录下的 `dsh-restart-menu-patch.cjs`(以本 skill 注入时给出的 base directory 为准)。
+- **Node 解释器**:优先用系统 PATH 里的 `node`;没有时用应用自带 runtime 的 node,典型位置 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`。
+
+1. 运行准备模式(重新定位偏移、生成补丁副本、通过 WMI 启动独立等待进程):
 
    ```
-   & "C:\Users\<你的用户名>\AppData\Local\Programs\DeepSeek Harness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" prepare
+   & "<node.exe 路径>" "<skill 资源目录>\dsh-restart-menu-patch.cjs" prepare
    ```
 
-   注意:如果本会话的命令执行沙箱报 `Windows Job runner` 错误或写入 app.asar 副本无效,改用变通通道:临时安装一个 apply 里 `spawnSync` 执行上述命令的 bundle(新目录路径安装,Host 进程不受沙箱限制);或者把上面这条命令交给用户在普通终端里手动运行。
+   app.asar 位置由脚本自动探测(从 node.exe 路径向上找 `resources\app.asar`,回退 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources`);特殊安装位置可用环境变量 `DSH_RESOURCES_DIR` 指向 resources 目录。
+
+   prepare 会自动用 WMI(`Invoke-CimMethod Win32_Process Create`)创建独立的 wait 进程。**不要改用直接 spawn / 会话后台任务**:沙箱会话的子进程会被 Job 对象连带清理,而且 waiter 若活在本 Host 内,应用退出时会随 Host 一起被杀,永远等不到换入;只有 WMI 创建的进程独立于 Host 才能存活。
+
+   若 prepare 报 `WMI spawn failed`,让用户在普通终端手动运行同一条命令的 `wait` 模式代替。
 
 2. 等待进程已挂起,盯着 `app.asar` 的解锁。**让用户完全退出 DeepSeek Harness(托盘图标右键 → 退出)再重新打开**——退出瞬间补丁自动换入,重新打开后左上角"应用"菜单即出现"重启应用与 Host"。
 
 3. 验证:
 
    ```
-   & "…\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" status
+   & "<node.exe 路径>" "<skill 资源目录>\dsh-restart-menu-patch.cjs" status
    ```
 
    `live state: patched @offset …: true/*dev*/` 即生效（`original` 为未打补丁）;`last-swap.txt` 里有 swap 记录。
@@ -30,7 +39,7 @@ DeepSeek Harness 更新会用新的 `app.asar` 覆盖补丁,使左上角"应用"
 ## 回滚
 
 ```
-& "…\node.exe" "C:\Users\<你的用户名>\.dsh\skills\repair-restart-menu\dsh-restart-menu-patch.cjs" revert
+& "<node.exe 路径>" "<skill 资源目录>\dsh-restart-menu-patch.cjs" revert
 ```
 
 (用 `app.asar.old` 恢复;若无 .old 则需重装应用。)

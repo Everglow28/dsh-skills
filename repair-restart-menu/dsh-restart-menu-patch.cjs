@@ -18,7 +18,28 @@ const fs = require("fs");
 const path = require("path");
 const cp = require("child_process");
 
-const RESOURCE_DIR = "C:/Users/n7789/AppData/Local/Programs/DeepSeek Harness/resources";
+// 定位安装目录(含 app.asar 的 resources 目录),不硬编码路径:
+// 1) 环境变量 DSH_RESOURCES_DIR 显式指定;
+// 2) 用本脚本运行的 node.exe 路径向上找(内置 runtime 位于 resources/runtime/.../node);
+// 3) 回退 %LOCALAPPDATA%/Programs/DeepSeek Harness/resources。
+function findResourceDir() {
+  const candidates = [];
+  if (process.env.DSH_RESOURCES_DIR) candidates.push(process.env.DSH_RESOURCES_DIR);
+  let dir = path.dirname(process.execPath);
+  for (let i = 0; i < 8 && dir !== path.dirname(dir); i++) {
+    candidates.push(path.join(dir, "resources"));
+    dir = path.dirname(dir);
+  }
+  if (process.env.LOCALAPPDATA) {
+    candidates.push(path.join(process.env.LOCALAPPDATA, "Programs", "DeepSeek Harness", "resources"));
+  }
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, "app.asar"))) return c;
+  }
+  throw new Error("app.asar not found; set DSH_RESOURCES_DIR to the app's resources directory");
+}
+
+const RESOURCE_DIR = findResourceDir();
 const LIVE = RESOURCE_DIR + "/app.asar";
 const WORK = __dirname;
 const PATCHED = path.join(WORK, "app.asar.patched");
@@ -72,6 +93,21 @@ function readBytesAt(file, offset) {
   return buf;
 }
 
+// 通过 WMI 创建独立的 wait 进程。不要改回 cp.spawn(即使 detached):
+// 沙箱化会话的命令 runner 把子进程放进 Windows Job 对象,命令结束就连带清理;
+// 且 waiter 若活在本 Host 内,应用退出时会随 Host 一起被杀,永远等不到换入。
+// WMI 创建的进程独立于当前进程树和 Host,是唯一可靠通道。
+function spawnWaiter() {
+  const cmdline = `"${process.execPath}" "${__filename}" wait`;
+  const ps = "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '" + cmdline + "' }; \"$($r.ReturnValue) $($r.ProcessId)\"";
+  const out = cp.spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { encoding: "utf8" });
+  const m = (out.stdout || "").trim().match(/^(\d+) (\d+)$/);
+  if (!m || m[1] !== "0") {
+    throw new Error(`WMI spawn failed (${(out.stderr || out.stdout || "no output").trim()}); 在普通终端手动运行 wait 命令代替`);
+  }
+  return Number(m[2]);
+}
+
 function prepare() {
   const offset = locate(LIVE);
   const current = readBytesAt(LIVE, offset).toString("utf8");
@@ -85,10 +121,9 @@ function prepare() {
   const verify = readBytesAt(PATCHED, offset).toString("utf8");
   if (verify !== "true/*dev*/") throw new Error(`patch copy verify failed (written=${written}, read=${verify})`);
   fs.appendFileSync(MARKER, `prepare ${new Date().toISOString()}: copy ready at offset ${offset}\n`);
-  // 启动分离的等待进程:等应用退出后自动换入
-  const child = cp.spawn(process.execPath, [__filename, "wait"], { detached: true, stdio: "ignore", windowsHide: true });
-  child.unref();
-  return { offset, waiterPid: child.pid };
+  // 用 WMI 启动独立等待进程:等应用退出后自动换入
+  const waiterPid = spawnWaiter();
+  return { offset, waiterPid };
 }
 
 function wait() {
