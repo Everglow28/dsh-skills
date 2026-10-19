@@ -21,8 +21,9 @@ description: 开发、调试、发布 DeepSeek Harness(DSH)插件(bundle 双半�
 
 ## 本地调试
 
+- **改插件前主动进入开发模式**(link 直通),**发布完成后主动退出**(恢复线上正式版),详见 reference.md「开发模式」节;当前处于哪种模式要向用户说明。
 - link 安装:profile `package.json` 依赖写 `"link:<绝对路径>"`,bundle 加入 `dsh.profile.bundles`,`pnpm install --dir <profile>`。
-- **生效边界:client.js 刷新页面即生效;index.js 必须重启 DSH。**
+- **生效边界:client.js 改动无需重启——刷新页面必生效;切换/新建会话时 Web 端按会话重新拉取插件脚本,实测不手动刷新也能生效(2026-10-19)。index.js 必须重启 DSH。**
 - UI 状态可临时伪造模块级缓存来预览,预览完撤掉;接口字段拿真实 JSON 对账,勿凭想象适配。
 - 验证层:`dsh --profile <name> --dump-config`。
 
@@ -32,6 +33,7 @@ description: 开发、调试、发布 DeepSeek Harness(DSH)插件(bundle 双半�
 
 ## 高频坑(详见 reference.md 末节)
 
+- **双副本陷阱**:profile 实际加载的是 `dsh.profile.bundles` 里包名对应的 `node_modules` **真实拷贝**;工作区源码目录、`@local/<name>` junction 未必被加载。改源码后"部分改动生效/完全不生效"先查加载的是哪份(对比各候选 client.js 的 SHA256),不要怀疑浏览器缓存。
 - 严禁 BOM(PowerShell 5.1 utf8 默认带 BOM,会让 host 崩溃);用 node fs.writeFileSync。
 - pnpm 供应链 `minimumReleaseAge` 冷静期会静默降到旧版:profile `pnpm-workspace.yaml` 加**包级** `minimumReleaseAgeExclude`。
 - registry 副本同步延迟最长 12 分钟,期间重装会锁旧版本(lockfile 固定后要 `--latest` 跨版)。

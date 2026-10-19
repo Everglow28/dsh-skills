@@ -139,8 +139,28 @@ dsh --profile desktop --dump-config   # 应看到 "# == dsh-my-plugin" 层;先�
 
 ### 生效边界(关键)
 
-- **client.js 改动** → 刷新页面即生效(link 安装下源码直通)
+- **client.js 改动** → 无需重启:刷新页面必生效(link 安装下源码直通);Web 端在切换/新建会话时会按会话重新拉取插件脚本,实测不手动刷新也能生效(2026-10-19,profile 副本同步后新会话直接见到新 UI)。反向排查"改动没生效"时,先确认客户端确实重新拉取过(新会话或刷新),再查双副本。
 - **index.js(Host)改动** → **必须重启 DSH**(Host 进程在启动时加载插件)
+
+### 开发模式(改前主动进入,发布后主动退出)
+
+本机同时存在"源码仓库"与"已安装副本"时(如 glm-quota-dock:源码在 default-workspace,profile 装的是 npm 拷贝),直接改源码**不会生效**。约定流程(执行时向用户说明当前模式):
+
+**进入开发模式(开始任何修改之前)**:
+
+1. profile `package.json` 依赖改为 `"link:<源码仓库绝对路径>"`(如 `"dsh-glm-quota-dock": "link:C:\\...\\glm-quota-dock"`),bundle 名保持在 `dsh.profile.bundles`;
+2. `pnpm install --dir <profile>`;
+3. **重启 DSH 一次**(层与 Host 半部在启动时加载)。
+
+此后 client.js 刷新页面即生效、index.js 重启生效,不再有副本同步问题。
+
+**退出开发模式(发布流程全部完成后)**:
+
+1. profile 依赖改回 `"^<修改前已发布的版本>"`(**旧版**,不是刚发布的新版);
+2. `pnpm install --dir <profile>`(需要跨 lockfile 范围时用 `pnpm update <pkg> --latest --dir`);
+3. **重启 DSH**。
+
+退出后本机插件 = 普通用户手里的旧正式版,插件内的版本检测/一键自更新会真实发现刚发布的新版并从 npm 拉取——这是发布后端到端验证升级链路的唯一方式;link 模式下该链路没有意义。
 
 ### 调试技巧
 
@@ -148,6 +168,8 @@ dsh --profile desktop --dump-config   # 应看到 "# == dsh-my-plugin" 层;先�
 - UI 状态可模拟:把组件的模块级缓存/初始 state 临时伪造(如"有更新"的 latest 版本号),刷新页面直看效果,**预览完撤掉再发版**。
 - 真实接口字段不确定时:先只透传上游 `data`,在浏览器 Network 拿真实 JSON 对账,再决定哪些字段有 UI 价值——不要凭想象写适配。
 - 插件列表出现"幽灵旧版本":多为 profile node_modules 里残留的旧安装副本;对齐 `bundles` 列表与 lockfile、删掉残留目录即可。
+- **双副本陷阱(2026-10-19 实战)**:改了工作区源码、刷新甚至重启后"只有部分改动生效"——生效的只是曾手动拷贝过的那份。根因:profile 实际加载 `dsh.profile.bundles` 里包名对应的 `node_modules` **真实拷贝目录**;源码仓库、`@local/<name>` junction(插件管理器 link 惯例的残留)都不一定被加载。诊断:读 profile `package.json` 的 `dsh.profile.bundles` → 对每个候选目录的 `client.js` 求 SHA256 对比源码。修复:同步到实际加载目录应急,或按上节进入 link: 开发模式根治。
+- **会话模式与插件开发无关**:标准/创造模式只决定 Agent 会话有哪些工具与技能(创造模式多 `plugin_manager` + `cordis_inspect_*` + 开发技能),不改变插件加载方式。标准模式下没有 `cordis_inspect_query` 报 `packageDir` 时,用上面的哈希对比替代;没有 `plugin_manager` 时,用终端手工改 profile `package.json` + `pnpm install --dir` 等价完成进入/退出开发模式。
 - 桌面版技能/工具行为异常:用安装版 CLI(`app.asar` 内)配 `ELECTRON_RUN_AS_NODE=1` + scratch `DSH_HOME` 做 headless 复现。
 - 配置查询:会话内 Agent 用 `cordis_inspect_list` / `cordis_inspect_query`(Config.listConfigs)查看激活状态与 packageDir,不执行 Remote 方法。
 
@@ -177,5 +199,6 @@ dsh --profile desktop --dump-config   # 应看到 "# == dsh-my-plugin" 层;先�
 - **严禁 BOM**:PowerShell 5.1 `Set-Content -Encoding utf8` 默认带 BOM,会让 DSH host `JSON.parse` 直接崩溃;一律用 `node fs.writeFileSync` 或 pwsh 7 `utf8NoBOM`,改完校验头 3 字节非 `EF BB BF`。
 - **pnpm 发布冷静期**:DSH 供应链策略有 `minimumReleaseAge`,刚发布的版本装不回来(静默降到旧版)。解法:profile `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 加**包级**条目(按版本豁免可能不生效);或临时 `--config.minimum-release-age=0`。
 - **lockfile 固定旧版**:在 registry 同步延迟窗口内安装会把 `^旧版本` 写进 lockfile,之后 `pnpm update` 只在范围内挑;要 `--latest` 强制跨版。
+- **双副本陷阱**:见§五调试技巧——profile 加载 `bundles` 包名对应的 `node_modules` 拷贝,改源码仓库/junction 不等于改插件;开发期应进入 link: 开发模式,发布后退出恢复正式版。
 - **patch 覆盖是整行替换**:用户在 profile patch 里 override 某行时必须重述全部 config 键——组合包作者给的默认值因此很重要。
 - linked checkout 需要与宿主共享 dsh 包时,按官方规则同时在 `peerDependencies` 与 `devDependencies` 声明;独立第三方依赖放 `dependencies`。
