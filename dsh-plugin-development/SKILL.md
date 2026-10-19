@@ -29,7 +29,7 @@ description: 开发、调试、发布 DeepSeek Harness(DSH)插件(bundle 双半�
 
 ## 发布(需用户明确指令,一次授权只覆盖当轮)
 
-1. `node --check` → 2. **两处版本号同步**(package.json + client 内版本常量)→ 3. 更新 README/版本历史 → 4. commit + push → 5. tag → 6. `gh release create` → 7. `npm publish`(token:用户级环境变量 `NPM_PUBLISH_TOKEN`)→ 8. 轮询 registry 同步(最长 12 分钟)→ 9. `pnpm update <pkg> --latest --dir <profile>` 升级本地。
+0. **恢复本机副本到当前已发布正式版**(「发布」= 本轮调试结束;每次发布前自动做,做法见 reference.md 第 9 步)→ 1. `node --check` → 2. **两处版本号同步**(package.json + client 内版本常量)→ 3. 更新 README/版本历史 → 4. commit + push → 5. tag → 6. `gh release create` → 7. `npm publish`(token:用户级环境变量 `NPM_PUBLISH_TOKEN`;账号 2FA 策略要求浏览器认证——**Agent 拉起可见 PowerShell 窗口执行,用户在网页点认证**,命令见 reference.md「发布流程」)→ 8. 轮询 registry 同步(最长 12 分钟)→ 9. 发布后**不升级**本机 profile——留待插件内「可更新」由用户决定(用户明确要求时才 `pnpm update <pkg> --latest --dir <profile>`)。tag / GitHub Release / npm publish 三者相互独立:npm 只认 package.json 的 version,不打 Release 不影响 npm,但 README 的 Release 徽标会停在旧版。
 
 ## 高频坑(详见 reference.md 末节)
 

@@ -175,28 +175,37 @@ dsh --profile desktop --dump-config   # 应看到 "# == dsh-my-plugin" 层;先�
 
 ## 六、发布流程(RELEASE.md 清单)
 
-> 前提(一次性):git init 关联 GitHub;`gh` CLI 登录;npm granular token 存用户级环境变量 `NPM_PUBLISH_TOKEN`(账号开 2FA 时普通 .npmrc token 会被 403)。
+> 前提(一次性):git init 关联 GitHub;`gh` CLI 登录;npm granular token 存用户级环境变量 `NPM_PUBLISH_TOKEN`(.npmrc 里的旧 token 已失效;2026-10 起 granular token 也因账号 2FA 策略**无法单独直发**,见第 7 步)。
 
 每次发版:
 
+0. **恢复本机副本**(每次发布前自动做,无需用户提示):「发布」指令即代表本轮修改与调试结束——先把本机已安装副本恢复为**当前已发布的正式版**(做法见第 9 步),再走后续发布。这样发版后本机停在旧版,插件的静默更新检查会发现新版并出现「可更新」,何时升级由用户决定,顺带端到端验证自更新链路。
 1. **改代码** → `node --check` 全过。
 2. **升版本**:语义化——新功能 minor、修复 patch;client.js 内 `PLUGIN_VERSION` 常量同步改。
 3. **更新文档**:README 特性列表;RELEASE.md 版本历史表加一行。
 4. **提交推送**:`git add -A && git commit && git push origin main`。
 5. **打标签**:`git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`。
 6. **GitHub Release**:`gh release create vX.Y.Z --title "…" --notes "…"`(README 徽标读它)。
-7. **npm 发布**(在包目录内;npm 预构建产物,用户安装无需构建授权):
+7. **npm 发布**(在包目录内;**2026-10-19 定稿流程:Agent 执行命令,用户只做浏览器认证**)。账号 2FA 策略使纯 token 直发 **403/EOTP**;新建 granular token 也已拿不到 bypass-2fa(2027-01 直发能力全面移除,届时迁移 stage-only / trusted publishing)。Agent 的非交互 shell 里 `npm publish` 会打印 `www.npmjs.com/auth/cli/***` 后**立即退出**——正确做法是 **Agent 拉起一个可见 PowerShell 窗口执行**(窗口内是 TTY,npm 自动打开浏览器),用户在网页完成认证后窗口内命令自动续发:
    ```powershell
-   $tok = [Environment]::GetEnvironmentVariable('NPM_PUBLISH_TOKEN', 'User')
+   $repo = '<包目录绝对路径>'
+   $inner = @'
+   $tok=[Environment]::GetEnvironmentVariable('NPM_PUBLISH_TOKEN','User')
+   Set-Location "$repo"
    npm publish "--//registry.npmjs.org/:_authToken=$tok"
+   Read-Host "见上方 + 包名@版本 即成功,回车关闭"
+   '@
+   Start-Process powershell -ArgumentList '-NoProfile','-NoExit','-Command',$inner
    ```
+   窗口拉起后 Agent 轮询 `npm view <pkg> version --prefer-online`(每 25 秒,最长 12 分钟)确认新版本上线;若账号绑了验证器 App,也可让用户报 6 位码,`npm publish --otp=<码> "--//registry.npmjs.org/:_authToken=$tok"` 在会话内直发(30 秒时效,拿到立即跑)。token 有效性用 `npm whoami "--//registry.npmjs.org/:_authToken=$tok"` 验证(UI 已无 Classic 选项,granular 同为 40 字符,勿以长度区分)。注意:对**已发布版本**重跑 publish 会在 2FA 检查之前就被 "cannot publish over the previously published versions" 短路,不能用它测试认证链路。
 8. **确认同步**:registry 副本经代理同步有**几分钟到 12 分钟**延迟,轮询 `npm view <pkg> version --prefer-online`;未同步期间**不要**让用户重装,会锁到旧版本。
-9. **升级已安装的 profile**:`pnpm update <pkg> --latest --dir <profile>`(普通 `update` 可能因 lockfile 范围不跨版)。
+9. **发布后本地处理:默认不升级**——本机副本已停在上一个正式版(第 0 步),新版交给插件内自更新呈现「可更新」,何时升级由用户决定(这同时端到端验证了升级链路);**仅当用户明确要求**本地立即升级时才 `pnpm update <pkg> --latest --dir <profile>`(普通 `update` 可能因 lockfile 范围不跨版)。恢复旧正式版的做法:`npm pack <pkg>@<旧版>` 解包,用 `package/` 内文件覆盖 profile `node_modules/<pkg>/`(字节级还原,不触发 pnpm)。
 
 ## 七、发布纪律与已知坑
 
-- **发布必须由用户明确指令授权**(2026-10-14 起):一次"继续/发布"只授权当轮;之后的改动只报告"已改完、待发布"。
+- **发布必须由用户明确指令授权**(2026-10-14 起):一次"继续/发布"只授权当轮;之后的改动只报告"已改完、待发布"。版本号的 minor/patch 判断也属项目层偏好,写在各插件自己的 RELEASE.md(如 glm-quota-dock 要求发版前先询问用户),skill 不携带。
 - **严禁 BOM**:PowerShell 5.1 `Set-Content -Encoding utf8` 默认带 BOM,会让 DSH host `JSON.parse` 直接崩溃;一律用 `node fs.writeFileSync` 或 pwsh 7 `utf8NoBOM`,改完校验头 3 字节非 `EF BB BF`。
+- **npm 直发 403/EOTP**:granular token 已不能绕 2FA 直发(2026-10-19 实测),Agent 非交互 shell 里 publish 只打印认证 URL 后退出——让用户在交互终端跑,或拿 `--otp`;详见§六第 7 步。
 - **pnpm 发布冷静期**:DSH 供应链策略有 `minimumReleaseAge`,刚发布的版本装不回来(静默降到旧版)。解法:profile `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 加**包级**条目(按版本豁免可能不生效);或临时 `--config.minimum-release-age=0`。
 - **lockfile 固定旧版**:在 registry 同步延迟窗口内安装会把 `^旧版本` 写进 lockfile,之后 `pnpm update` 只在范围内挑;要 `--latest` 强制跨版。
 - **双副本陷阱**:见§五调试技巧——profile 加载 `bundles` 包名对应的 `node_modules` 拷贝,改源码仓库/junction 不等于改插件;开发期应进入 link: 开发模式,发布后退出恢复正式版。
