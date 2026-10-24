@@ -21,7 +21,7 @@ Copy-Item dsh-skills/tinify ~/.dsh/skills/ -Recurse
 
 ## 说明
 
-- `repair-restart-menu` 运行时产生的 `app.asar.patched` / `app.asar.old`(各约 120MB)不入库。
+- `repair-restart-menu` 运行时产生的 `app.asar.patched` / `app.asar.old`(各约 180MB)不入库。
 - 各 skill 之间有少量协作关系(如 screenshots 在图片过大时调用 tinify 压缩)。
 
 ## License
